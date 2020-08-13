@@ -24,10 +24,20 @@ namespace Sumtotal.ConfigurationsAutomation
         {
             string group;
             group = parameters["Group"].ToString();
-            group = "II";
-            baseExtract = SettingsFactory.GetExtractor(group);
-            baseExtract.LoadDependencies(_logger);
-            baseExtract.Execute(context, parameters);
+            string[] groups = group.Split(',');
+            if (groups.Length > 0)
+            {
+                foreach (var g in groups)
+                {
+                    baseExtract = SettingsFactory.GetExtractor(g);
+                    baseExtract.LoadDependencies(_logger);
+                    baseExtract.Execute(context, parameters);
+                }
+            }
+            else
+            {
+                _logger.LogError("Configure Groups to be processed properly.");
+            }
         }
 
         protected virtual void Dispose(bool disposing)
