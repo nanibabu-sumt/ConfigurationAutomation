@@ -39,7 +39,7 @@ namespace Sumtotal.ConfigurationsAutomation.Services
                 group = parameters["Group"].ToString();
                 string reportPath = parameters["ExtractPath"].ToString();
                 string filePrefix = parameters["FilePrefix"].ToString();
-
+                //added new line  code test
 
                 ISystemJobRepository systemJobRepository = SumtContainer.Resolve<ISystemJobRepository>();
                 ICodeDefinitionFacade facade = SumtContainer.Resolve<ICodeDefinitionFacade>();
