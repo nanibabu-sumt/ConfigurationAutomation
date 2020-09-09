@@ -92,6 +92,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ConfigurationParameters.cs" />
     <Compile Include="ConfigurationsExport.cs" />
     <Compile Include="Contracts\IExtractPhase_I.cs" />
     <Compile Include="Contracts\IExtractPhase_II.cs" />

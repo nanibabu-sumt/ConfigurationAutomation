@@ -31,23 +31,17 @@ namespace Sumtotal.ConfigurationsAutomation.Services
             dataProvider.Open();
             try
             {
-                int masterCategoryCode;
-                string group;
-
-                //Load job parameters
-                masterCategoryCode = Convert.ToInt32(parameters["MasterCategoryCode"]);
-                group = parameters["Group"].ToString();
                 string reportPath = parameters["ExtractPath"].ToString();
                 string filePrefix = parameters["FilePrefix"].ToString();
                 //added new line  code test
 
                 ISystemJobRepository systemJobRepository = SumtContainer.Resolve<ISystemJobRepository>();
                 ICodeDefinitionFacade facade = SumtContainer.Resolve<ICodeDefinitionFacade>();
-                CodeDefinitionDTO codeDefinition = facade.GetCodeDefinitionWithAttributes(masterCategoryCode);
+                CodeDefinitionDTO codeDefinition = facade.GetCodeDefinitionWithAttributes(_configurationParameters.MasterCategoryCode);
 
                 var finalPath = Path.Combine(reportPath, filePrefix + "_" + DateTime.Now.ToString("yyyyMMdd'_'HHmmss") + ".xlsx");
 
-                IList<CodeDTO> codes = codeDefinition.Codes.Where(c => c.CodeAttributeDTO.Attr1Val.Equals(group)).ToList();
+                IList<CodeDTO> codes = codeDefinition.Codes.Where(c => c.CodeAttributeDTO.Attr1Val.Equals(_configurationParameters.Group)).ToList();
                 if (codes.Count == 0)
                 {
                     _logger.LogError("Please recheck master category code in system job parameters");
@@ -230,6 +224,15 @@ namespace Sumtotal.ConfigurationsAutomation.Services
             {
                 dataProvider.Close();
             }
+        }
+
+        public override void ExecuteExport(ServiceJobContext context, IDictionary<string, object> parameters)
+        {
+            return;
+        }
+        public override void ExecuteImport(ServiceJobContext context, IDictionary<string, object> parameters)
+        {
+            return;
         }
         private Tuple<DataTable,DataTable> GetRoleMaskData()
         {

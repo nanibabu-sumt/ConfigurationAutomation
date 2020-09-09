@@ -17,7 +17,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
-
+using System.Text;
 
 namespace Sumtotal.ConfigurationsAutomation.Services
 {
@@ -25,7 +25,7 @@ namespace Sumtotal.ConfigurationsAutomation.Services
     {
         ServiceJobContext jobContext = new ServiceJobContext();
         IPersonFacade personFacade = SumtContainer.Resolve<IPersonFacade>();
-
+        Dictionary<string, int> orgDomains = new Dictionary<string, int>();
 
         public ExtractPhase_I()
         {
@@ -41,23 +41,18 @@ namespace Sumtotal.ConfigurationsAutomation.Services
 
             try
             {
-                int masterCategoryCode;
-                string group;
 
-                //Load job parameters
-                masterCategoryCode = Convert.ToInt32(parameters["MasterCategoryCode"]);
-                group = parameters["Group"].ToString();
                 string reportPath = parameters["ExtractPath"].ToString();
                 string filePrefix = parameters["FilePrefix"].ToString();
 
 
                 ISystemJobRepository systemJobRepository = SumtContainer.Resolve<ISystemJobRepository>();
                 ICodeDefinitionFacade facade = SumtContainer.Resolve<ICodeDefinitionFacade>();
-                CodeDefinitionDTO codeDefinition = facade.GetCodeDefinitionWithAttributes(masterCategoryCode);
+                CodeDefinitionDTO codeDefinition = facade.GetCodeDefinitionWithAttributes(_configurationParameters.MasterCategoryCode);
 
                 var finalPath = Path.Combine(reportPath, filePrefix + "_" + DateTime.Now.ToString("yyyyMMdd'_'HHmmss") + ".xlsx");
 
-                IList<CodeDTO> codes = codeDefinition.Codes.Where(c => c.CodeAttributeDTO.Attr1Val.Equals(group)).ToList();
+                IList<CodeDTO> codes = codeDefinition.Codes.Where(c => c.CodeAttributeDTO.Attr1Val.Equals(_configurationParameters.Group)).ToList();
                 if (codes.Count == 0)
                 {
                     _logger.LogError("Please recheck master category code in system job parameters");
@@ -184,6 +179,112 @@ namespace Sumtotal.ConfigurationsAutomation.Services
                 dataProvider.Close();
             }
         }
+        public override void ExecuteImport(ServiceJobContext context, IDictionary<string, object> parameters)
+        {
+            string currentTime = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+            _logger.LogInfo($"Execution Proces Started for {context.JobKey} at {currentTime}.");
+            dataProvider = SumtContainer.Resolve<IDataProvider>();
+            dataProvider.Open();
+            try
+            {
+                string importConfigFilePath = parameters["ImportConfigFilepath"].ToString();
+                string OrgFilePath = parameters["OrganizationListFilePath"].ToString();
+                DataTable dtOrgnization = Helper.FileContentToDataTable(OrgFilePath, true);
+                dtOrgnization.PrimaryKey = new DataColumn[] {
+                    dtOrgnization.Columns["code"]
+                };
+                DataTable dtpersist = Helper.FileContentToDataTable(importConfigFilePath, false);
+                DataTable dtDBOrg = GetOrgDetails();
+                UpdatePersist(dtpersist, dtOrgnization, dtDBOrg);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error while processing configurations extract.", ex);
+                throw (ex);
+            }
+            finally
+            {
+                dataProvider.Close();
+            }
+        }
+        public override void ExecuteExport(ServiceJobContext context, IDictionary<string, object> parameters)
+        {
+            string currentTime = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+            _logger.LogInfo($"Execution Proces Started for {context.JobKey} at {currentTime}.");
+            dataProvider = SumtContainer.Resolve<IDataProvider>();
+            dataProvider.Open();
+
+            try
+            {
+                string settingstoExport = string.Empty;
+                //Load job parameters
+                settingstoExport = parameters["SettingsExport"].ToString();
+                string reportPath = parameters["ExtractPath"].ToString();
+
+                ISystemJobRepository systemJobRepository = SumtContainer.Resolve<ISystemJobRepository>();
+                ICodeDefinitionFacade facade = SumtContainer.Resolve<ICodeDefinitionFacade>();
+                CodeDefinitionDTO codeDefinition = facade.GetCodeDefinitionWithAttributes(_configurationParameters.MasterCategoryCode);
+
+                IList<CodeDTO> codes = codeDefinition.Codes.Where(c => c.CodeAttributeDTO.Attr1Val.Equals(_configurationParameters.Group)).ToList();
+               // codeDefinition.Codes.Where(c => c.ItemText.Equals(settingstoExport)).ToList();
+                string sectionLookupClause = string.Empty;
+                foreach (CodeDTO code in codes)
+                {
+                    String[] sectionLookups = code.CodeAttributeDTO.Attr2Val.Split(',');
+                    for (int i = 0; i < sectionLookups.Length; i++)
+                    {
+                        sectionLookups[i] = " p.Section like '%" + sectionLookups[i] + "%'";
+                    }
+                    sectionLookupClause += String.Join(" OR ", sectionLookups);
+                }
+                orgDomains = GetOrgDetails(_configurationParameters.Domains);
+                foreach(KeyValuePair<string,int> kvp in orgDomains)
+                {
+                    GetPersistData(reportPath, sectionLookupClause, kvp);
+                }
+               
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error while processing configurations extract.", ex);
+                throw (ex);
+            }
+            finally
+            {
+                dataProvider.Close();
+            }
+
+        }
+        private void GetPersistData(string reportPath, string sectionClause, KeyValuePair<string, int> domainCode)
+        {
+            try
+            {
+                string sqlCommand = @"SELECT rtrim(ltrim(cast(App as varchar(50)))) +','+ Scope +','+Section +','+replace(Data,char(13)+char(10),'<<<<>>>') as settings from Persist p
+                             where " + sectionClause;
+                sqlCommand += " Section like '%" + domainCode.Value + "%'";
+             
+                DataSet dataSet = dataProvider.ExecuteSelectSql(sqlCommand);
+                DataTable dt = dataSet.Tables[0];
+                var finalPath = Path.Combine(reportPath, "Persist_ApprovalConfig_"+ domainCode.Key +"_"+ DateTime.Now.ToString("yyyyMMdd'_'HHmmss") + ".txt");
+                IEnumerable<string> columnNames = dt.Columns.Cast<DataColumn>().
+                                  Select(column => column.ColumnName);
+                StringBuilder sb = new StringBuilder();
+                //sb.AppendLine(string.Join(",", columnNames));
+                foreach (DataRow row in dt.Rows)
+                {
+                    string[] fields = row.ItemArray.Select(field => field.ToString()).
+                                                    ToArray();
+                    sb.AppendLine(string.Join(",", fields));
+                }
+                File.WriteAllText(finalPath, sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error Occoured in ClassName {nameof(Export)} Method {nameof(GetPersistData)}" + ex.Message);
+
+            }
+        }
+
         private DataTable PullSectionSettingvaluesIntoTemp(string lookupClause, bool checkOnlyGlobal = false)
         {
             string sqlCommand = string.Empty;
@@ -435,5 +536,96 @@ namespace Sumtotal.ConfigurationsAutomation.Services
             return result;
         }
 
+        private Dictionary<string,int> GetOrgDetails(string[] orgCodes)
+        {
+            try
+            {
+                DataTable dt = new DataTable();
+                string domainsToLookup = null;
+                string executableQuery = "Select distinct OrganizationPK, code from Organization WHERE OrgDomainInd = 1 and Deleted = 0";
+                if (orgCodes.Length>0)
+                {
+                    domainsToLookup = string.Join(",", orgCodes.Select(x => $"'{x}'"));
+                    executableQuery += " AND Code in (" + domainsToLookup + ")";
+                }
+
+                DataSet dataSet = dataProvider.ExecuteSelectSql(executableQuery);
+                dt = dataSet.Tables[0];
+                dt.PrimaryKey = new DataColumn[] {
+                    dt.Columns["code"]
+                };
+                return dt.AsEnumerable()
+                      .ToDictionary<DataRow, string, int>(row => row.Field<string>(1),
+                       row => row.Field<int>(0));
+            }
+            catch(Exception ex)
+            {
+                _logger.LogError($"Error Occoured in ClassName {nameof(ExtractPhase_I)} Method {nameof(GetOrgDetails)}" + ex.Message);
+                _logger.LogError($"Please check Attr3Val in the configuration category.");
+                return null;
+            }
+            
+        }
+
+        private void UpdatePersist(DataTable persistData, DataTable dtOrgnization, DataTable dtDBOrg)
+        {
+            var query = (from fileorg in dtOrgnization.AsEnumerable()
+                         join dbOrg in dtDBOrg.AsEnumerable()
+                         on fileorg.Field<string>("code") equals dbOrg.Field<string>("code")
+                         select new
+                         {
+                             fileCode = fileorg.Field<string>("code"),
+                             Dbcode = dbOrg.Field<string>("code"),
+                             fileOrgPk = Convert.ToInt32(fileorg.Field<string>("organizationpk")),
+                             dbOrgPk = dbOrg.Field<int>("organizationpk")
+                         }).ToList();
+
+            foreach (DataRow oRow in persistData.Rows)
+            {
+                string spliltScope = oRow.ItemArray[2].ToString();
+                string[] scope = spliltScope.Split(new string[] { "/" }, StringSplitOptions.None);
+                if (scope.Length == 3)
+                {
+                    var items = query.Where(f => f.fileOrgPk == Convert.ToInt32(scope[1])).Select(n => n.dbOrgPk).ToList<int>();
+                    if (items.Count != 0)
+                    {
+                        string finalScope = scope[0] + "/" + items[0] + "/" + scope[2];
+
+                        Dictionary<string, object> spParams = new Dictionary<string, object>()
+                    {
+                    {"@app", oRow.ItemArray[0].ToString() },
+                    {"@scope", oRow.ItemArray[1].ToString()},
+                    {"@section", finalScope },
+                    {"@data", oRow.ItemArray[3].ToString()}
+                    };
+                        try
+                        {
+                            string sqlCommand = "Update persist set data = replace( @data, '<<<<>>>', char(13) + char(10)) where app = @app  AND scope = @scope  AND Section = @section";
+                            dataProvider.ExecuteNonQueryStmt(sqlCommand, spParams);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError("Error while updating system job parameter.", ex);
+                            throw (ex);
+                        }
+                    }
+
+
+                }
+
+            }
+        }
+
+        private DataTable GetOrgDetails()
+        {
+            DataTable dt = new DataTable();
+
+            DataSet dataSet = dataProvider.ExecuteSelectSql("Select OrganizationPK,code from Organization");
+            dt = dataSet.Tables[0];
+            dt.PrimaryKey = new DataColumn[] {
+                    dt.Columns["code"]
+                };
+            return dt;
+        }
     }
 }
